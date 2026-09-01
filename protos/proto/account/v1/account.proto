@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package account.v1;
+
+import "common/v1/money.proto";
+
+service AccountService {
+  rpc CreateAccount(CreateAccountRequest) returns (CreateAccountResponse);
+  rpc GetAccount(GetAccountRequest) returns (GetAccountResponse);
+}
+
+message CreateAccountRequest {
+  string user_id = 1;
+
+  // ISO 4217 alphabetic code, e.g. "USD".
+  string currency = 2;
+}
+
+// Every RPC gets its own dedicated response message, even when it currently
+// wraps a single field. Reusing Account directly would mean that adding any
+// per-RPC field later (a warning, a request id, pagination) is a breaking
+// change for every other RPC that shares the type.
+message CreateAccountResponse {
+  Account account = 1;
+}
+
+message GetAccountRequest {
+  string id = 1;
+}
+
+message GetAccountResponse {
+  Account account = 1;
+}
+
+message Account {
+  string id = 1;
+  string user_id = 2;
+
+  // Cached balance - the source of truth is the sum of ledger entries in the
+  // Ledger service. The currency travels inside Money, so an account with a
+  // zero balance still carries its currency.
+  common.v1.Money balance = 3;
+
+  // Optimistic concurrency token for balance cache refreshes.
+  int64 version = 4;
+}

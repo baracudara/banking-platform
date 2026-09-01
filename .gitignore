@@ -1,0 +1,31 @@
+# Go build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
+
+# Test / coverage output
+*.test
+*.out
+coverage.*
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Local workspace overrides - go.work itself IS committed (it defines the
+# monorepo layout and must be identical on every machine), but go.work.sum
+# is a local resolution artifact that churns between Go versions.
+go.work.sum
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editors
+.idea/
+.vscode/
+*.swp

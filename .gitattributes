@@ -1,0 +1,14 @@
+# Normalize line endings in the repo to LF regardless of the machine that
+# commits. Without this, editing the same file on Windows and on macOS
+# produces diffs where every single line looks changed.
+* text=auto eol=lf
+
+# Generated protobuf code: keep it in the repo (so a machine without buf can
+# still build), but mark it so GitHub collapses it in diffs and excludes it
+# from language statistics.
+protos/gen/** linguist-generated=true
+
+# Never touch line endings in binaries.
+*.png binary
+*.jpg binary
+*.pdf binary

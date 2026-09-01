@@ -1,0 +1,16 @@
+version: v2
+# Managed mode: go_package is NOT written in the .proto files at all - buf
+# derives it from this prefix. This makes it impossible for the option to
+# drift out of sync with the file's actual location.
+managed:
+  enabled: true
+  override:
+    - file_option: go_package_prefix
+      value: banking/protos/gen/go
+plugins:
+  - local: protoc-gen-go
+    out: gen/go
+    opt: paths=source_relative
+  - local: protoc-gen-go-grpc
+    out: gen/go
+    opt: paths=source_relative

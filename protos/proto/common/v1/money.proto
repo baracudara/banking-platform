@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package common.v1;
+
+// Money is the shared monetary type for every service in the platform.
+//
+// The amount is stored in minor units (cents) as an int64 - never a float,
+// which cannot represent decimal fractions exactly and would silently lose
+// money to rounding. The currency travels with the amount so that a Money
+// value is self-describing and cannot be accidentally added to an amount in
+// a different currency without an explicit check.
+message Money {
+  int64 amount_minor = 1;
+
+  // ISO 4217 alphabetic code, e.g. "USD", "EUR".
+  string currency_code = 2;
+}

@@ -1,0 +1,25 @@
+services:
+  postgres-account:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: banking
+      POSTGRES_PASSWORD: banking
+      POSTGRES_DB: account
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata_account:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U banking -d account"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  pgdata_account:
+
+# One Postgres instance per service (database-per-service), not one shared
+# database for everything. This is a deliberate microservices decision: it
+# keeps each service's schema independent and forces communication to go
+# through APIs/events instead of a shared table, at the cost of needing
+# saga/outbox patterns for anything that spans services (see Ledger later).
