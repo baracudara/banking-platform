@@ -1,4 +1,4 @@
-.PHONY: up down proto lint breaking migrate-account run-account tidy build
+.PHONY: up down proto lint breaking migrate-account migrate-account-down run-account tidy build
 
 up:
 	docker compose up -d
@@ -19,9 +19,20 @@ lint:
 breaking:
 	cd protos && buf breaking --against '../.git#branch=main,subdir=protos'
 
+# Migrations run through the migrate/migrate image rather than a locally
+# installed binary: nothing to install, and the exact same command works on
+# macOS and on Windows. The container joins the compose network, so it
+# addresses Postgres by service name, not through the published port.
+MIGRATE = docker run --rm --network banking-platform_default \
+	-v "$(CURDIR)/services/account/migrations:/migrations" migrate/migrate \
+	-path=/migrations \
+	-database "postgres://banking:banking@postgres-account:5432/account?sslmode=disable"
+
 migrate-account:
-	migrate -path services/account/migrations \
-		-database "postgres://banking:banking@localhost:5432/account?sslmode=disable" up
+	$(MIGRATE) up
+
+migrate-account-down:
+	$(MIGRATE) down 1
 
 run-account:
 	cd services/account && go run ./cmd/server
