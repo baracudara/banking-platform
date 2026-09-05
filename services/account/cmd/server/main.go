@@ -3,54 +3,58 @@ package main
 import (
 	"context"
 	"log/slog"
-	"net"
 	"os"
+	"os/signal"
+	"syscall"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-	"google.golang.org/grpc"
-
-	"banking/services/account/internal/repository"
-	"banking/services/account/internal/service"
-	"banking/services/account/internal/transport/grpcserver"
+	"banking/services/account/internal/app"
+	"banking/services/account/internal/config"
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	ctx := context.Background()
+	cfg := config.MustLoad()
+	log := setupLogger(cfg.Env)
 
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://banking:banking@localhost:5432/account?sslmode=disable"
-	}
+	log.Info("starting account service", slog.String("env", cfg.Env))
 
-	pool, err := pgxpool.New(ctx, dsn)
+	application, err := app.New(context.Background(), log, cfg)
 	if err != nil {
-		logger.Error("failed to connect to postgres", "error", err)
-		os.Exit(1)
-	}
-	defer pool.Close()
-
-	repo := repository.NewAccountRepository(pool)
-	svc := service.NewAccountService(repo)
-	handler := grpcserver.NewServer(svc)
-
-	grpcPort := os.Getenv("GRPC_PORT")
-	if grpcPort == "" {
-		grpcPort = "50051"
-	}
-
-	lis, err := net.Listen("tcp", ":"+grpcPort)
-	if err != nil {
-		logger.Error("failed to listen", "error", err)
+		log.Error("failed to start", "error", err)
 		os.Exit(1)
 	}
 
-	grpcServer := grpc.NewServer()
-	handler.Register(grpcServer)
+	// Serve blocks, so it runs in its own goroutine while main waits for a
+	// termination signal.
+	go func() {
+		if err := application.GRPCServer.Run(); err != nil {
+			log.Error("grpc server error", "error", err)
+			os.Exit(1)
+		}
+	}()
 
-	logger.Info("account service listening", "port", grpcPort)
-	if err := grpcServer.Serve(lis); err != nil {
-		logger.Error("grpc server error", "error", err)
-		os.Exit(1)
+	// Buffered so that a signal arriving before the receive is not dropped:
+	// signal.Notify never blocks on send, it discards instead.
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+
+	sig := <-stop
+	log.Info("shutdown signal received", slog.String("signal", sig.String()))
+
+	application.GRPCServer.Stop()
+	application.Close()
+
+	log.Info("stopped")
+}
+
+func setupLogger(env string) *slog.Logger {
+	switch env {
+	case config.EnvProd:
+		return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	case config.EnvDev:
+		return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	case config.EnvLocal:
+		return slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	default:
+		return slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	}
 }

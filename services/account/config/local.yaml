@@ -1,0 +1,19 @@
+# Local development config. It is committed on purpose: the credentials here
+# match docker-compose.yml and are worthless outside a laptop. Real secrets
+# never live in this file - every field can be overridden by the environment
+# variable named in its `env:` tag, which is how staging and prod get theirs.
+env: local
+
+postgres:
+  host: localhost
+  port: 5432
+  user: banking
+  password: banking
+  dbname: account
+  min_conns: 2
+  max_conns: 10
+  connect_timeout: 5s
+
+grpc:
+  port: 50051
+  shutdown_timeout: 10s

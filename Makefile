@@ -35,7 +35,7 @@ migrate-account-down:
 	$(MIGRATE) down 1
 
 run-account:
-	cd services/account && go run ./cmd/server
+	cd services/account && go run ./cmd/server --config=config/local.yaml
 
 build:
 	go build banking/protos/... banking/services/account/...
