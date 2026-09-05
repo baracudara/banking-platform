@@ -1,0 +1,11 @@
+# Keep the build context small and deterministic. Everything the image needs
+# is copied explicitly in the Dockerfile.
+.git
+.github
+**/*.md
+**/config/*.yaml
+docker-compose.yml
+Makefile
+go.work
+go.work.sum
+**/migrations

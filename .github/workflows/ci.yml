@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A new push to the same branch makes the previous run pointless - cancel it
+# instead of paying for both.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    name: Build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+          cache-dependency-path: |
+            protos/go.sum
+            services/account/go.sum
+
+      # go.work is committed, so these package patterns resolve across both
+      # modules. `go build ./...` would fail here: the repository root is not
+      # itself a module.
+      - name: Build
+        run: go build banking/protos/... banking/services/account/...
+
+      - name: Vet
+        run: go vet banking/protos/... banking/services/account/...
+
+      # -race is the point of this step, not an extra: this project is about
+      # concurrency, and a data race is exactly the class of bug that passes
+      # a normal test run and fails in production under load.
+      - name: Test
+        run: go test -race -count=1 banking/services/account/...
+
+  proto:
+    name: Proto contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # buf breaking compares against a previous commit, which is not in
+          # the default shallow clone.
+          fetch-depth: 0
+
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Lint
+        working-directory: protos
+        run: buf lint
+
+      # Catches changes that stay compilable but break the wire contract -
+      # a renamed field, a reused tag number - which no Go compiler and no
+      # unit test would notice, and which only surfaces as corrupt data on a
+      # consumer that was built against the old schema.
+      - name: Breaking changes
+        working-directory: protos
+        run: |
+          if git rev-parse HEAD~1 >/dev/null 2>&1; then
+            buf breaking --against '../.git#ref=HEAD~1,subdir=protos'
+          else
+            echo "no previous commit to compare against, skipping"
+          fi
+
+  docker:
+    name: Docker build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Build only, no push: this job proves the image still builds. Pushing
+      # and deploying happen in a separate workflow on the self-hosted
+      # runner, which is aarch64 like the deployment target.
+      - name: Build account image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/account/Dockerfile
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
