@@ -23,7 +23,7 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success'
 
-    runs-on: [self-hosted, linux, ARM64, banking]
+    runs-on: [self-hosted, Linux, ARM64, banking]
 
     steps:
       - uses: actions/checkout@v4
