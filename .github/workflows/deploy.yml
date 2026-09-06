@@ -1,0 +1,68 @@
+name: Deploy
+
+on:
+  # Deploys only run after CI has actually passed on main, rather than in
+  # parallel with it - otherwise a red build could still reach the host.
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  # Manual trigger for rollbacks and for re-running a failed deploy.
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # Skip when the CI run that triggered this one failed. workflow_run fires
+    # on completion regardless of outcome, so this check is what makes the
+    # dependency real.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+
+    runs-on: [self-hosted, linux, ARM64, banking]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The image is built here rather than on a cloud runner because this
+      # host is aarch64: building it natively avoids QEMU emulation, and the
+      # artifact never has to travel through a registry for a single-host
+      # deployment. The trade-off is that a build competes for CPU with the
+      # services already running on this box - worth revisiting once we start
+      # measuring latency under load.
+      - name: Build image
+        run: |
+          docker build \
+            -f services/account/Dockerfile \
+            -t banking/account:${{ github.sha }} \
+            -t banking/account:latest \
+            .
+
+      # depends_on with a healthcheck means compose waits for Postgres to
+      # actually accept connections before the migration container starts.
+      - name: Apply migrations
+        run: docker compose -f deploy/docker-compose.prod.yml --profile tools run --rm migrate up
+        env:
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+
+      - name: Roll out
+        run: docker compose -f deploy/docker-compose.prod.yml up -d
+        env:
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          IMAGE_TAG: ${{ github.sha }}
+
+      - name: Verify
+        run: |
+          sleep 5
+          docker compose -f deploy/docker-compose.prod.yml ps
+          docker compose -f deploy/docker-compose.prod.yml logs --tail=20 account
+
+      # Old image layers accumulate on a machine that builds every deploy and
+      # would eventually fill the disk silently.
+      - name: Prune
+        if: always()
+        run: docker image prune -f --filter "until=168h"

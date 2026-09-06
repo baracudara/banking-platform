@@ -1,0 +1,65 @@
+# Deployment stack for the single-host environment (the old Mac running
+# Fedora Asahi). This is separate from the docker-compose.yml at the root,
+# which exists purely to give a developer a database on their laptop.
+# Explicit project name so the network and volume names don't depend on the
+# directory the deploy happens to run from.
+name: banking
+
+services:
+  postgres-account:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: banking
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_DB: account
+    # No published port. Postgres is reachable only from other containers on
+    # this network, so the database is not exposed to the LAN even if the
+    # host firewall is open.
+    volumes:
+      - pgdata_account:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U banking -d account"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  account:
+    image: banking/account:${IMAGE_TAG:-latest}
+    environment:
+      ENV: prod
+      GRPC_PORT: 50051
+      POSTGRES_HOST: postgres-account
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+    ports:
+      - "50051:50051"
+    depends_on:
+      postgres-account:
+        condition: service_healthy
+    # Give the container at least as long to stop as the service's own
+    # shutdown_timeout, otherwise Docker's default 10s SIGKILL would cut the
+    # graceful drain short - the exact thing graceful shutdown exists to avoid.
+    stop_grace_period: 20s
+    restart: unless-stopped
+
+  # Run on demand, never as part of `up`:
+  #   docker compose --profile tools run --rm migrate up
+  # Declaring it here rather than as a raw `docker run` in the workflow means
+  # it joins this stack's network by name, with no guessing about what
+  # compose called it.
+  migrate:
+    image: migrate/migrate
+    profiles: [tools]
+    volumes:
+      - ../services/account/migrations:/migrations
+    entrypoint:
+      - migrate
+      - -path=/migrations
+      - -database
+      - postgres://banking:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres-account:5432/account?sslmode=disable
+    depends_on:
+      postgres-account:
+        condition: service_healthy
+
+volumes:
+  pgdata_account:
