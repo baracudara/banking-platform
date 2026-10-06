@@ -1,0 +1,55 @@
+- name: WireGuard full-mesh overlay between lab nodes
+  hosts: all
+  tasks:
+    - name: Install WireGuard
+      ansible.builtin.apt:
+        name: wireguard
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Generate private key on the node (never leaves it)
+      ansible.builtin.shell: umask 077 && wg genkey > /etc/wireguard/private.key
+      args:
+        creates: /etc/wireguard/private.key
+
+    - name: Derive public key
+      ansible.builtin.shell: wg pubkey < /etc/wireguard/private.key
+      register: wg_pub
+      changed_when: false
+
+    - name: Remember public key as a host fact
+      ansible.builtin.set_fact:
+        wg_pubkey: "{{ wg_pub.stdout }}"
+
+    - name: Render wg0.conf
+      ansible.builtin.template:
+        src: wg0.conf.j2
+        dest: /etc/wireguard/wg0.conf
+        mode: "0600"
+      notify: Restart wg0
+
+    - name: Allow WireGuard UDP port publicly
+      community.general.ufw:
+        rule: allow
+        port: "{{ wg_port | string }}"
+        proto: udp
+
+    # Peers are our own nodes; narrow this per service later
+    - name: Allow all traffic arriving over the overlay
+      community.general.ufw:
+        rule: allow
+        interface: wg0
+        direction: in
+
+    - name: Enable and start wg0
+      ansible.builtin.systemd:
+        name: wg-quick@wg0
+        enabled: true
+        state: started
+
+  handlers:
+    - name: Restart wg0
+      ansible.builtin.systemd:
+        name: wg-quick@wg0
+        state: restarted

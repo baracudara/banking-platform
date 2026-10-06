@@ -1,0 +1,12 @@
+[Interface]
+Address = {{ wg_ip }}/24
+ListenPort = {{ wg_port }}
+PostUp = wg set %i private-key /etc/wireguard/private.key
+{% for peer in groups['all'] if peer != inventory_hostname %}
+
+# {{ peer }}
+[Peer]
+PublicKey = {{ hostvars[peer].wg_pubkey }}
+AllowedIPs = {{ hostvars[peer].wg_ip }}/32
+Endpoint = {{ hostvars[peer].ansible_host }}:{{ wg_port }}
+{% endfor %}

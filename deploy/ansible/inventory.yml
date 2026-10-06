@@ -1,0 +1,29 @@
+all:
+  vars:
+    ansible_user: ops
+    ansible_become: true
+    ops_user: ops
+    ops_pubkey_file: ~/.ssh/vultr-lab.pub
+    wg_port: 51820
+    wg_cidr: 10.20.0.0/24
+    ssh_key: ~/.ssh/vultr-lab
+    haproxy_mode: http
+    postgres_password: "{{ lookup('ansible.builtin.password', inventory_dir ~ '/.secrets/postgres_password length=32 chars=ascii_letters,digits') }}"
+  children:
+    balancers:
+      hosts:
+        lb:
+          ansible_host: 203.0.113.10
+          wg_ip: 10.20.0.1
+      vars:
+        ufw_public_tcp_ports: [22, 50051]
+    app:
+      hosts:
+        app-1:
+          ansible_host: 203.0.113.11
+          wg_ip: 10.20.0.2
+        app-2:
+          ansible_host: 203.0.113.12
+          wg_ip: 10.20.0.3
+      vars:
+        ufw_public_tcp_ports: [22]

@@ -1,0 +1,42 @@
+- name: Postgres for account-service on the balancer node (lab only)
+  hosts: balancers
+  vars:
+    stack_dir: /opt/banking/postgres
+  tasks:
+    - name: Create stack directory
+      ansible.builtin.file:
+        path: "{{ stack_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Write compose env file
+      ansible.builtin.copy:
+        dest: "{{ stack_dir }}/.env"
+        content: "POSTGRES_PASSWORD={{ postgres_password }}\n"
+        mode: "0600"
+      no_log: true
+
+    - name: Render compose file
+      ansible.builtin.template:
+        src: postgres.compose.yml.j2
+        dest: "{{ stack_dir }}/docker-compose.yml"
+        mode: "0640"
+
+    - name: Ship migrations
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../../services/account/migrations/"
+        dest: "{{ stack_dir }}/migrations/"
+        mode: "0644"
+
+    - name: Start Postgres and wait until healthy
+      community.docker.docker_compose_v2:
+        project_src: "{{ stack_dir }}"
+        wait: true
+        wait_timeout: 90
+
+    - name: Apply migrations
+      ansible.builtin.command:
+        cmd: docker compose --profile tools run --rm migrate up
+        chdir: "{{ stack_dir }}"
+      register: migrate_out
+      changed_when: "'no change' not in (migrate_out.stdout + migrate_out.stderr)"

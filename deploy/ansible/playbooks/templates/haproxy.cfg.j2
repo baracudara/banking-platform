@@ -1,0 +1,37 @@
+{% set http = haproxy_mode == 'http' %}
+global
+    log /dev/log local0
+    maxconn 4096
+    user haproxy
+    group haproxy
+    daemon
+
+defaults
+    log global
+    mode {{ haproxy_mode }}
+    option {{ 'httplog' if http else 'tcplog' }}
+    timeout connect 3s
+    timeout client 60s
+    timeout server 60s
+    retries 3
+    option redispatch
+
+# Public entry point. `proto h2` makes the listener speak cleartext HTTP/2
+# (what gRPC clients use without TLS) so HAProxy sees individual requests.
+frontend grpc_in
+    bind *:50051{{ ' proto h2' if http else '' }}
+    default_backend account
+
+backend account
+    balance roundrobin
+{% for h in groups['app'] %}
+    server {{ h }} {{ hostvars[h].wg_ip }}:50051{{ ' proto h2' if http else '' }} check inter 2s fall 2 rise 2
+{% endfor %}
+
+# Local-only stats page; reach it through an SSH tunnel.
+listen stats
+    bind 127.0.0.1:8404
+    mode http
+    stats enable
+    stats uri /stats
+    stats refresh 5s

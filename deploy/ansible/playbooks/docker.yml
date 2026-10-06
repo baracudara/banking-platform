@@ -1,0 +1,38 @@
+- name: Docker engine on all lab nodes
+  hosts: all
+  tasks:
+    - name: Install Docker engine and compose plugin
+      ansible.builtin.apt:
+        name: [docker.io, docker-compose-v2]
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Create docker.service drop-in directory
+      ansible.builtin.file:
+        path: /etc/systemd/system/docker.service.d
+        state: directory
+        mode: "0755"
+
+    # Containers publish ports on the overlay address; if Docker came up before
+    # wg0 existed the bind would fail after a reboot.
+    - name: Order docker after the WireGuard interface
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/docker.service.d/10-after-wireguard.conf
+        content: |
+          [Unit]
+          After=wg-quick@wg0.service
+          Wants=wg-quick@wg0.service
+        mode: "0644"
+      register: docker_dropin
+
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: docker_dropin.changed
+
+    - name: Enable and start docker
+      ansible.builtin.systemd:
+        name: docker
+        enabled: true
+        state: started

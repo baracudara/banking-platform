@@ -1,0 +1,85 @@
+# Push-model deploy: build once on the controller, stream the image to every
+# app node over SSH, then roll the nodes one at a time.
+- name: Build account image once (linux/amd64)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_become: false
+    repo_root: "{{ playbook_dir }}/../../.."
+  tasks:
+    - name: Compute immutable image tag from git
+      ansible.builtin.shell: |
+        tag=$(git rev-parse --short HEAD)
+        [ -n "$(git status --porcelain -- services/account protos)" ] && tag="$tag-dirty-$(date +%s)"
+        echo "$tag"
+      args:
+        chdir: "{{ repo_root }}"
+      register: tag_out
+      changed_when: false
+
+    - name: Build image
+      ansible.builtin.command:
+        cmd: >-
+          docker buildx build --platform linux/amd64
+          -f services/account/Dockerfile
+          -t banking/account:{{ tag_out.stdout }} --load .
+        chdir: "{{ repo_root }}"
+      changed_when: true
+
+    - name: Remember tag
+      ansible.builtin.set_fact:
+        image_tag: "{{ tag_out.stdout }}"
+
+- name: Roll account-service across app nodes
+  hosts: app
+  serial: 1
+  vars:
+    image_tag: "{{ hostvars['localhost'].image_tag }}"
+    stack_dir: /opt/banking/account
+  tasks:
+    - name: Check whether the node already has the image
+      ansible.builtin.command: docker image inspect banking/account:{{ image_tag }}
+      register: have_image
+      failed_when: false
+      changed_when: false
+
+    - name: Stream image to the node (docker save | ssh docker load)
+      ansible.builtin.shell: >-
+        docker save banking/account:{{ image_tag }} | gzip |
+        ssh -i {{ ssh_key }} -o BatchMode=yes {{ ansible_user }}@{{ ansible_host }}
+        'gunzip | sudo docker load'
+      delegate_to: localhost
+      vars:
+        ansible_become: false
+      when: have_image.rc != 0
+
+    - name: Create stack directory
+      ansible.builtin.file:
+        path: "{{ stack_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Write compose env file
+      ansible.builtin.copy:
+        dest: "{{ stack_dir }}/.env"
+        content: "POSTGRES_PASSWORD={{ postgres_password }}\n"
+        mode: "0600"
+      no_log: true
+
+    - name: Render compose file
+      ansible.builtin.template:
+        src: account.compose.yml.j2
+        dest: "{{ stack_dir }}/docker-compose.yml"
+        mode: "0640"
+
+    - name: Start or update account-service
+      community.docker.docker_compose_v2:
+        project_src: "{{ stack_dir }}"
+        remove_orphans: true
+
+    - name: Wait for the gRPC port on the overlay address
+      ansible.builtin.wait_for:
+        host: "{{ wg_ip }}"
+        port: 50051
+        timeout: 30

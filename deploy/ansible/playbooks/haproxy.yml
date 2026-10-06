@@ -1,0 +1,31 @@
+# haproxy_mode: http (L7, balances individual gRPC requests) or tcp (L4,
+# balances connections). Override with -e haproxy_mode=tcp for experiments.
+- name: HAProxy in front of the app nodes
+  hosts: balancers
+  tasks:
+    - name: Install HAProxy
+      ansible.builtin.apt:
+        name: haproxy
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Render haproxy.cfg (validated before it replaces the live one)
+      ansible.builtin.template:
+        src: haproxy.cfg.j2
+        dest: /etc/haproxy/haproxy.cfg
+        mode: "0644"
+        validate: haproxy -c -f %s
+      notify: Reload haproxy
+
+    - name: Enable and start haproxy
+      ansible.builtin.systemd:
+        name: haproxy
+        enabled: true
+        state: started
+
+  handlers:
+    - name: Reload haproxy
+      ansible.builtin.systemd:
+        name: haproxy
+        state: reloaded

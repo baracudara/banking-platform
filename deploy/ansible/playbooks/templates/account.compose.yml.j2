@@ -1,0 +1,16 @@
+name: banking-account
+
+services:
+  account:
+    image: banking/account:{{ image_tag }}
+    environment:
+      ENV: prod
+      GRPC_PORT: 50051
+      POSTGRES_HOST: "{{ hostvars['lb'].wg_ip }}"
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+    # Overlay address only: the service is reachable through the balancer, not
+    # directly from the internet.
+    ports:
+      - "{{ wg_ip }}:50051:50051"
+    stop_grace_period: 20s
+    restart: unless-stopped
