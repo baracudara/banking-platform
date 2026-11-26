@@ -13,17 +13,17 @@ all:
     balancers:
       hosts:
         lb:
-          ansible_host: 203.0.113.10
+          ansible_host: 203.0.113.10  # replace with the balancer public IP
           wg_ip: 10.20.0.1
       vars:
         ufw_public_tcp_ports: [22, 50051]
     app:
       hosts:
         app-1:
-          ansible_host: 203.0.113.11
+          ansible_host: 203.0.113.11  # replace with app-1 public IP
           wg_ip: 10.20.0.2
         app-2:
-          ansible_host: 203.0.113.12
+          ansible_host: 203.0.113.12  # replace with app-2 public IP
           wg_ip: 10.20.0.3
       vars:
         ufw_public_tcp_ports: [22]

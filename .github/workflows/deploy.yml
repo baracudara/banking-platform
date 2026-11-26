@@ -19,9 +19,17 @@ jobs:
     # Skip when the CI run that triggered this one failed. workflow_run fires
     # on completion regardless of outcome, so this check is what makes the
     # dependency real.
+    #
+    # The repository is public and this job runs on a self-hosted runner, so
+    # it must only ever deploy a push to main of this repository. Without the
+    # event and repository checks, a pull request from a fork whose branch is
+    # also named "main" would satisfy the branch filter above and start a
+    # job on the deployment host.
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
 
     runs-on: [self-hosted, Linux, ARM64, banking]
 
