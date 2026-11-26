@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -19,9 +20,15 @@ import (
 type App struct {
 	GRPCServer *grpcapp.App
 
-	log  *slog.Logger
-	pool *pgxpool.Pool
+	log        *slog.Logger
+	pool       *pgxpool.Pool
+	stopHealth context.CancelFunc
 }
+
+const (
+	healthCheckInterval = 2 * time.Second
+	healthCheckTimeout  = time.Second
+)
 
 func New(ctx context.Context, log *slog.Logger, cfg *config.Config) (*App, error) {
 	pool, err := repository.NewPool(
@@ -38,11 +45,49 @@ func New(ctx context.Context, log *slog.Logger, cfg *config.Config) (*App, error
 	repo := repository.NewAccountRepository(pool)
 	svc := service.NewAccountService(repo)
 
-	return &App{
+	healthCtx, stopHealth := context.WithCancel(context.Background())
+	a := &App{
 		GRPCServer: grpcapp.New(log, svc, cfg.GRPC.Port, cfg.GRPC.ShutdownTimeout, cfg.ReflectionEnabled()),
 		log:        log,
 		pool:       pool,
-	}, nil
+		stopHealth: stopHealth,
+	}
+	go a.watchDatabase(healthCtx)
+
+	return a, nil
+}
+
+// watchDatabase feeds the gRPC health status from a real database ping and
+// logs only transitions, so a healthy instance stays quiet.
+func (a *App) watchDatabase(ctx context.Context) {
+	serving := false
+	check := func() {
+		pingCtx, cancel := context.WithTimeout(ctx, healthCheckTimeout)
+		defer cancel()
+		err := a.pool.Ping(pingCtx)
+		ok := err == nil
+		if ok != serving {
+			serving = ok
+			if ok {
+				a.log.Info("database reachable, reporting SERVING")
+			} else {
+				a.log.Warn("database unreachable, reporting NOT_SERVING", "error", err)
+			}
+		}
+		a.GRPCServer.SetServing(ok)
+	}
+
+	check()
+	ticker := time.NewTicker(healthCheckInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			check()
+		}
+	}
 }
 
 // Close releases resources after the server has stopped accepting traffic.
@@ -50,6 +95,7 @@ func New(ctx context.Context, log *slog.Logger, cfg *config.Config) (*App, error
 // a connection, otherwise in-flight queries fail during a shutdown that was
 // supposed to be graceful.
 func (a *App) Close() {
+	a.stopHealth()
 	a.log.Info("closing database pool")
 	a.pool.Close()
 }

@@ -14,6 +14,8 @@ import (
 	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/recovery"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/health"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
 
@@ -24,6 +26,7 @@ import (
 type App struct {
 	log             *slog.Logger
 	server          *grpc.Server
+	health          *health.Server
 	port            int
 	shutdownTimeout time.Duration
 }
@@ -51,6 +54,14 @@ func New(log *slog.Logger, svc *service.AccountService, port int, shutdownTimeou
 
 	grpcserver.NewServer(svc).Register(server)
 
+	// Readiness, not just liveness: the status is driven by SetServing from
+	// a dependency check, so a replica that cannot reach its database tells
+	// the balancer to stop sending it traffic instead of failing every call.
+	// It starts NOT_SERVING so no traffic arrives before the first check.
+	healthServer := health.NewServer()
+	healthServer.SetServingStatus("", healthpb.HealthCheckResponse_NOT_SERVING)
+	healthpb.RegisterHealthServer(server, healthServer)
+
 	// Off in production: reflection would let anyone who can reach the port
 	// enumerate every service, method and message type this server exposes.
 	if enableReflection {
@@ -61,9 +72,21 @@ func New(log *slog.Logger, svc *service.AccountService, port int, shutdownTimeou
 	return &App{
 		log:             log,
 		server:          server,
+		health:          healthServer,
 		port:            port,
 		shutdownTimeout: shutdownTimeout,
 	}
+}
+
+// SetServing reports whether the service can currently handle requests.
+// It is a no-op once Stop has begun, so a late dependency check cannot flip a
+// draining instance back to SERVING.
+func (a *App) SetServing(ok bool) {
+	status := healthpb.HealthCheckResponse_NOT_SERVING
+	if ok {
+		status = healthpb.HealthCheckResponse_SERVING
+	}
+	a.health.SetServingStatus("", status)
 }
 
 func (a *App) Run() error {
@@ -86,6 +109,9 @@ func (a *App) Run() error {
 // abrupt termination graceful shutdown was meant to avoid.
 func (a *App) Stop() {
 	a.log.Info("stopping grpc server", slog.Duration("timeout", a.shutdownTimeout))
+
+	// Tell balancers to stop routing here before the drain begins.
+	a.health.Shutdown()
 
 	stopped := make(chan struct{})
 	go func() {

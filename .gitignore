@@ -40,3 +40,6 @@ CLAUDE.local.md
 deploy/ansible/LAB_LOG.md
 deploy/ansible/experiments/
 deploy/ansible/inventory.local.yml
+
+# Personal roadmap notes (Russian, local only)
+docs/plan-*.md

@@ -1,7 +1,13 @@
 # Build context is the repository root, not this directory: the service
 # depends on the shared banking/protos module, which lives outside its own
 # tree and has to be copied in as well.
-FROM golang:1.27-alpine AS builder
+# The builder always runs on the build machine's own architecture and the Go
+# toolchain cross-compiles for the target, so building an amd64 image on an
+# arm64 laptop needs no QEMU emulation.
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS builder
+
+ARG TARGETOS
+ARG TARGETARCH
 
 WORKDIR /src
 
@@ -25,7 +31,7 @@ COPY services/account/ ./services/account/
 # The symbol table and DWARF data are stripped: they are only useful with a
 # debugger attached, which is not how this binary will ever be inspected.
 RUN cd services/account && \
-    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags='-s -w' -o /out/account ./cmd/server
+    CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -trimpath -ldflags='-s -w' -o /out/account ./cmd/server
 
 # distroless/static holds a CA bundle, /etc/passwd and nothing else: no
 # shell, no package manager, no busybox. An attacker who achieves RCE has no
